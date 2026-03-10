@@ -37,18 +37,25 @@
   const db = getDatabase(app);
 
   // ==================== REALTIME SYNC ====================
-  let appData = { pages: {}, records: {} };
+  let appData = { pages: {}, records: {}, users: {} };
 
   function syncData() {
     onValue(ref(db, 'pages'), (snap) => {
       appData.pages = snap.val() || {};
-      window._pagesReady = true;
       window.dispatchEvent(new Event('dataChanged'));
     });
     onValue(ref(db, 'records'), (snap) => {
       appData.records = snap.val() || {};
-      window._recordsReady = true;
       window.dispatchEvent(new Event('dataChanged'));
+    });
+    onValue(ref(db, 'users'), (snap) => {
+      appData.users = snap.val() || {};
+      window.dispatchEvent(new Event('dataChanged'));
+      // Check if current user data updated (e.g. role change)
+      if (window.currentUser) {
+        const updated = Object.entries(appData.users || {}).find(([id]) => id === window.currentUser.id);
+        if (updated) window.currentUser = { ...updated[1], id: updated[0] };
+      }
     });
   }
 
@@ -58,7 +65,6 @@
     addPage: (data) => push(ref(db, 'pages'), data),
     updatePage: (id, data) => update(ref(db, `pages/${id}`), data),
     deletePage: async (id) => {
-      // Delete page and all its records
       await remove(ref(db, `pages/${id}`));
       const recs = Object.entries(appData.records).filter(([,r]) => r.pageId === id);
       await Promise.all(recs.map(([rid]) => remove(ref(db, `records/${rid}`))));
@@ -68,6 +74,12 @@
     addRecord: (data) => push(ref(db, 'records'), data),
     updateRecord: (id, data) => set(ref(db, `records/${id}`), data),
     deleteRecord: (id) => remove(ref(db, `records/${id}`)),
+
+    // Users
+    addUser: (data) => push(ref(db, 'users'), data),
+    updateUser: (id, data) => update(ref(db, `users/${id}`), data),
+    deleteUser: (id) => remove(ref(db, `users/${id}`)),
+    getUsers: () => Object.entries(appData.users || {}).map(([id, u]) => ({ ...u, id })),
 
     // Getters
     getPages: () => Object.entries(appData.pages).map(([id, p]) => ({ ...p, id })),
@@ -271,6 +283,86 @@
 
   @media (max-width: 1100px) { .charts-grid { grid-template-columns: 1fr; } .top-grid { grid-template-columns: 1fr; } }
   @media (max-width: 768px) { .main { margin-left: 0; } .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ===== LOGIN ===== */
+  .login-screen {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; flex-direction: column; gap: 0;
+  }
+  .login-screen.hidden { display: none; }
+  .login-box {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 20px; padding: 40px; width: 380px; max-width: 92vw;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+    animation: modalIn 0.3s ease;
+  }
+  .login-logo { text-align: center; margin-bottom: 28px; }
+  .login-logo-icon {
+    width: 64px; height: 64px; background: linear-gradient(135deg,var(--accent),var(--accent2));
+    border-radius: 18px; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 32px; box-shadow: 0 0 30px rgba(79,142,247,0.4); margin-bottom: 12px;
+  }
+  .login-title { font-size: 22px; font-weight: 700; }
+  .login-sub { font-size: 13px; color: var(--text3); margin-top: 4px; }
+  .login-form { display: flex; flex-direction: column; gap: 14px; }
+  .login-form label { font-size: 12px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; display: block; }
+  .login-form input {
+    width: 100%; background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; color: var(--text);
+    font-size: 15px; font-family: var(--font); outline: none; transition: all 0.2s;
+  }
+  .login-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,142,247,0.12); }
+  .login-btn {
+    width: 100%; padding: 13px; background: var(--accent); color: white;
+    border: none; border-radius: 10px; font-size: 15px; font-weight: 600;
+    font-family: var(--font); cursor: pointer; margin-top: 6px; transition: all 0.2s;
+  }
+  .login-btn:hover { background: #3a7bf0; box-shadow: 0 0 24px rgba(79,142,247,0.35); }
+  .login-error {
+    background: rgba(247,95,109,0.12); border: 1px solid rgba(247,95,109,0.3);
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; color: var(--red);
+    display: none; text-align: center;
+  }
+  .login-error.show { display: block; }
+
+  /* ===== USER BADGE ===== */
+  .user-badge {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .user-badge:hover { border-color: var(--accent); }
+  .user-avatar {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: linear-gradient(135deg,var(--accent),var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: white;
+  }
+
+  /* ===== USER MANAGEMENT PAGE ===== */
+  .user-list { display: flex; flex-direction: column; gap: 10px; }
+  .user-item {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 20px; display: flex; align-items: center; gap: 14px; transition: all 0.2s;
+  }
+  .user-item:hover { border-color: var(--accent); }
+  .user-item-avatar {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: linear-gradient(135deg,var(--accent),var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 700; color: white; flex-shrink: 0;
+  }
+  .user-item-info { flex: 1; }
+  .user-item-name { font-weight: 600; font-size: 14px; }
+  .user-item-role { font-size: 12px; color: var(--text3); margin-top: 2px; }
+  .role-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  }
+  .role-badge.admin { background: rgba(247,201,79,0.15); color: var(--yellow); }
+  .role-badge.user { background: rgba(79,142,247,0.15); color: var(--accent); }
+
 </style>
 </head>
 <body>
@@ -280,6 +372,30 @@
   <div class="logo-icon" style="width:56px;height:56px;background:linear-gradient(135deg,#4f8ef7,#7b5ef8);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 0 30px rgba(79,142,247,0.4)">📊</div>
   <div class="loading-spinner"></div>
   <div class="loading-text">กำลังเชื่อมต่อ Firebase...</div>
+</div>
+
+
+<!-- ===== LOGIN SCREEN ===== -->
+<div class="login-screen" id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-logo-icon">📊</div>
+      <div class="login-title">PageProfit</div>
+      <div class="login-sub">กรุณา Login เพื่อเข้าใช้งาน</div>
+    </div>
+    <div class="login-form">
+      <div>
+        <label>Username</label>
+        <input type="text" id="login-username" placeholder="ใส่ username" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('login-password').focus()">
+      </div>
+      <div>
+        <label>Password</label>
+        <input type="password" id="login-password" placeholder="ใส่ password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <div class="login-error" id="login-error">Username หรือ Password ไม่ถูกต้อง</div>
+      <button class="login-btn" onclick="doLogin()">🔐 เข้าสู่ระบบ</button>
+    </div>
+  </div>
 </div>
 
 <div class="app">
@@ -298,6 +414,7 @@
       <div class="nav-item" onclick="navigate('pages')"><span class="nav-icon">🗂️</span> จัดการเพจ</div>
       <div class="nav-item" onclick="navigate('input')"><span class="nav-icon">✏️</span> กรอกข้อมูลยอดขาย</div>
       <div class="nav-item" onclick="navigate('analyze')"><span class="nav-icon">📈</span> วิเคราะห์เพจ</div>
+      <div class="nav-item" id="nav-users" style="display:none" onclick="navigate('users')"><span class="nav-icon">👥</span> จัดการ Users</div>
     </nav>
     <div class="sidebar-footer">
       <div class="sync-dot" id="sync-dot"></div>
@@ -318,6 +435,11 @@
           📤 Import
           <input type="file" id="import-file" accept=".xlsx,.xls" style="display:none" onchange="importExcel(event)">
         </label>
+        <div class="user-badge" onclick="showUserMenu()" id="user-badge" style="display:none">
+          <div class="user-avatar" id="user-avatar-text">U</div>
+          <span id="topbar-username">User</span>
+          <span style="color:var(--text3);font-size:10px">▾</span>
+        </div>
         <button class="btn btn-primary" onclick="navigate('input')">+ กรอกข้อมูล</button>
       </div>
     </div>
@@ -465,6 +587,15 @@
         <div id="analyze-content"><div class="empty"><div class="empty-icon">📊</div><div class="empty-text">กรุณาเลือกเพจ</div></div></div>
       </div>
 
+      <!-- PAGE: USERS -->
+      <div class="page" id="page-users">
+        <div class="section-header" style="margin-bottom:20px">
+          <div class="section-title">จัดการ Users (<span id="user-count">0</span>)</div>
+          <button class="btn btn-primary" onclick="openAddUserModal()">+ เพิ่ม User</button>
+        </div>
+        <div class="user-list" id="user-list"></div>
+      </div>
+
     </div>
   </main>
 </div>
@@ -507,7 +638,8 @@ const pageTitles = {
   monthly: ['รายงานรายเดือน','ยอดสะสมรายเดือน'],
   pages: ['จัดการเพจ','เพิ่ม/แก้ไข/ลบเพจ'],
   input: ['กรอกข้อมูลยอดขาย','บันทึกข้อมูลประจำวัน'],
-  analyze: ['วิเคราะห์เพจ','ดู Performance รายเพจ']
+  analyze: ['วิเคราะห์เพจ','ดู Performance รายเพจ'],
+  users: ['จัดการ Users','เพิ่ม/แก้ไข/ลบ User']
 };
 
 function navigate(page) {
@@ -515,7 +647,7 @@ function navigate(page) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   const navItems = document.querySelectorAll('.nav-item');
-  navItems[['dashboard','daily','monthly','pages','input','analyze'].indexOf(page)].classList.add('active');
+  navItems[['dashboard','daily','monthly','pages','input','analyze','users'].indexOf(page)].classList.add('active');
   const [title,sub] = pageTitles[page];
   document.getElementById('topbar-title').textContent = title;
   document.getElementById('topbar-sub').textContent = sub;
@@ -525,6 +657,7 @@ function navigate(page) {
   if (page==='pages') renderPageList();
   if (page==='input') { populatePageSelects(); renderRecordsTable(''); }
   if (page==='analyze') populatePageSelects();
+  if (page==='users') renderUserList();
 }
 
 // ==================== UTILS ====================
@@ -820,7 +953,7 @@ function init() {
   // Wait for Firebase then init
   waitForFirebase(() => {
     // Hide loading
-    setTimeout(()=>document.getElementById('loading-overlay').classList.add('hidden'),600);
+    setTimeout(()=>document.getElementById('loading-overlay').classList.add('hidden'),800);
 
     // Listen for data changes to re-render current page
     window.addEventListener('dataChanged', () => {
@@ -831,9 +964,18 @@ function init() {
       if(pid==='dashboard') renderDashboard();
       else if(pid==='pages') renderPageList();
       else if(pid==='input') renderRecordsTable('');
+      else if(pid==='users') renderUserList();
     });
 
-    renderDashboard();
+    // Check session
+    const savedUser = sessionStorage.getItem('pp_user');
+    if (savedUser) {
+      try {
+        currentUser = JSON.parse(savedUser);
+        onLoginSuccess();
+      } catch(e) { /* show login */ }
+    }
+    // else login screen stays visible
   });
 }
 
@@ -994,6 +1136,196 @@ async function importExcel(event) {
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+
+// ==================== AUTH & USER MANAGEMENT ====================
+
+let currentUser = null; // { id, username, displayName, role }
+
+// Simple hash (not cryptographic, but fine for this use case)
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + c;
+    hash |= 0;
+  }
+  return 'h' + Math.abs(hash).toString(16);
+}
+
+// ── LOGIN ──────────────────────────────────────────────────────
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim().toLowerCase();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+
+  if (!username || !password) {
+    errEl.textContent = 'กรุณากรอก Username และ Password';
+    errEl.classList.add('show'); return;
+  }
+
+  // Wait for Firebase
+  if (!window.firebaseAPI) { errEl.textContent = 'กำลังเชื่อมต่อ Firebase...'; errEl.classList.add('show'); return; }
+
+  const users = window.firebaseAPI.getUsers ? window.firebaseAPI.getUsers() : [];
+
+  // First time: auto-create admin if no users exist
+  if (users.length === 0) {
+    if (username === 'amonrat789' && simpleHash(password) === 'h5854bfcc') {
+      await window.firebaseAPI.addUser({
+        username: 'amonrat789',
+        passwordHash: 'h5854bfcc',
+        displayName: 'Admin',
+        role: 'admin',
+        createdAt: new Date().toISOString()
+      });
+      await new Promise(r => setTimeout(r, 600));
+      return doLogin();
+    }
+    errEl.textContent = 'กรุณาใช้ username และ password ที่ได้รับ';
+    errEl.classList.add('show'); return;
+  }
+
+  const found = users.find(u => u.username === username && u.passwordHash === simpleHash(password));
+  if (!found) {
+    errEl.textContent = 'Username หรือ Password ไม่ถูกต้อง';
+    errEl.classList.add('show');
+    document.getElementById('login-password').value = '';
+    return;
+  }
+
+  errEl.classList.remove('show');
+  currentUser = found;
+  sessionStorage.setItem('pp_user', JSON.stringify(found));
+  onLoginSuccess();
+}
+
+function onLoginSuccess() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('user-badge').style.display = 'flex';
+
+  // Update UI
+  const initials = (currentUser.displayName || currentUser.username).slice(0,2).toUpperCase();
+  document.getElementById('user-avatar-text').textContent = initials;
+  document.getElementById('topbar-username').textContent = currentUser.displayName || currentUser.username;
+  document.getElementById('menu-display-name').textContent = currentUser.displayName || currentUser.username;
+  document.getElementById('menu-role-text').textContent = currentUser.role === 'admin' ? '👑 Admin' : '👤 User';
+
+  // Show admin features
+  if (currentUser.role === 'admin') {
+    document.getElementById('nav-users').style.display = 'flex';
+    document.getElementById('menu-manage-users').style.display = 'block';
+  }
+
+  renderDashboard();
+}
+
+function doLogout() {
+  currentUser = null;
+  sessionStorage.removeItem('pp_user');
+  hideUserMenu();
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('user-badge').style.display = 'none';
+  document.getElementById('nav-users').style.display = 'none';
+  document.getElementById('login-username').value = '';
+  document.getElementById('login-password').value = '';
+}
+
+// ── USER MENU ──────────────────────────────────────────────────
+function showUserMenu() {
+  const m = document.getElementById('user-menu');
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+}
+function hideUserMenu() { document.getElementById('user-menu').style.display = 'none'; }
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('user-menu');
+  const badge = document.getElementById('user-badge');
+  if (menu && badge && !menu.contains(e.target) && !badge.contains(e.target)) hideUserMenu();
+});
+
+// ── USER MANAGEMENT PAGE ────────────────────────────────────────
+function renderUserList() {
+  const users = window.firebaseAPI ? window.firebaseAPI.getUsers() : [];
+  document.getElementById('user-count').textContent = users.length;
+  const container = document.getElementById('user-list');
+  if (!users.length) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">ยังไม่มี User</div></div>';
+    return;
+  }
+  container.innerHTML = users.map(u => `
+    <div class="user-item">
+      <div class="user-item-avatar">${(u.displayName||u.username).slice(0,2).toUpperCase()}</div>
+      <div class="user-item-info">
+        <div class="user-item-name">${u.displayName || u.username}</div>
+        <div class="user-item-role">@${u.username} · <span class="role-badge ${u.role}">${u.role==='admin'?'👑 Admin':'👤 User'}</span></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="openEditUserModal('${u.id}')">✏️ แก้ไข</button>
+        ${u.id !== currentUser?.id ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}')">🗑️</button>` : '<span style="font-size:12px;color:var(--text3);padding:5px">(คุณ)</span>'}
+      </div>
+    </div>
+  `).join('');
+}
+
+let editingUserId = null;
+function openAddUserModal() {
+  editingUserId = null;
+  document.getElementById('modal-user-title').textContent = 'เพิ่ม User ใหม่';
+  document.getElementById('modal-user-username').value = '';
+  document.getElementById('modal-user-password').value = '';
+  document.getElementById('modal-user-display').value = '';
+  document.getElementById('modal-user-role').value = 'user';
+  document.getElementById('modal-user-username').disabled = false;
+  document.getElementById('modal-user').classList.add('show');
+}
+function openEditUserModal(id) {
+  editingUserId = id;
+  const users = window.firebaseAPI.getUsers();
+  const u = users.find(u => u.id === id);
+  document.getElementById('modal-user-title').textContent = 'แก้ไข User';
+  document.getElementById('modal-user-username').value = u.username;
+  document.getElementById('modal-user-username').disabled = true;
+  document.getElementById('modal-user-password').value = '';
+  document.getElementById('modal-user-display').value = u.displayName || '';
+  document.getElementById('modal-user-role').value = u.role || 'user';
+  document.getElementById('modal-user').classList.add('show');
+}
+async function saveUser() {
+  const username = document.getElementById('modal-user-username').value.trim().toLowerCase();
+  const password = document.getElementById('modal-user-password').value;
+  const displayName = document.getElementById('modal-user-display').value.trim();
+  const role = document.getElementById('modal-user-role').value;
+
+  if (!editingUserId && !username) { showToast('กรุณากรอก Username', 'error'); return; }
+  if (!editingUserId && !password) { showToast('กรุณากรอก Password', 'error'); return; }
+  if (!editingUserId && password.length < 4) { showToast('Password ต้องมีอย่างน้อย 4 ตัวอักษร', 'error'); return; }
+
+  // Check duplicate username
+  if (!editingUserId) {
+    const existing = window.firebaseAPI.getUsers().find(u => u.username === username);
+    if (existing) { showToast('Username นี้มีอยู่แล้ว', 'error'); return; }
+  }
+
+  if (editingUserId) {
+    const updateData = { displayName, role };
+    if (password) updateData.passwordHash = simpleHash(password);
+    await window.firebaseAPI.updateUser(editingUserId, updateData);
+    showToast('แก้ไข User สำเร็จ');
+  } else {
+    await window.firebaseAPI.addUser({
+      username, passwordHash: simpleHash(password),
+      displayName: displayName || username, role,
+      createdAt: new Date().toISOString()
+    });
+    showToast('เพิ่ม User สำเร็จ');
+  }
+  closeModal('modal-user');
+}
+async function deleteUser(id) {
+  if (!confirm('ยืนยันการลบ User นี้?')) return;
+  await window.firebaseAPI.deleteUser(id);
+  showToast('ลบ User สำเร็จ');
 }
 
 </script>
