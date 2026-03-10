@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PageProfit — ระบบติดตามยอดขาย</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 
 <!-- ==========================================
@@ -312,6 +313,11 @@
       </div>
       <div class="topbar-right">
         <span style="font-size:12px;color:var(--text3);font-family:var(--mono)" id="current-date"></span>
+        <button class="btn btn-ghost" onclick="exportExcel()" title="Export Excel">📥 Export</button>
+        <label class="btn btn-ghost" style="cursor:pointer" title="Import Excel">
+          📤 Import
+          <input type="file" id="import-file" accept=".xlsx,.xls" style="display:none" onchange="importExcel(event)">
+        </label>
         <button class="btn btn-primary" onclick="navigate('input')">+ กรอกข้อมูล</button>
       </div>
     </div>
@@ -833,6 +839,163 @@ function init() {
 
 document.addEventListener('DOMContentLoaded', init);
 document.querySelectorAll('.modal-overlay').forEach(el=>el.addEventListener('click',e=>{if(e.target===el)el.classList.remove('show');}));
+
+// ==================== EXPORT EXCEL ====================
+function exportExcel() {
+  const pages = getPages();
+  const records = getRecords().sort((a,b) => new Date(a.date)-new Date(b.date));
+  if (!records.length) { showToast('ยังไม่มีข้อมูลให้ Export', 'error'); return; }
+
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: All records
+  const allData = [
+    ['วันที่', 'เพจ', 'ยอดขาย', 'ต้นทุนสินค้า', 'ค่าส่ง', 'ค่าโฆษณา', 'ค่าอื่นๆ', 'กำไรก่อนหักค่าใช้จ่าย', 'กำไรสุทธิ', 'หมายเหตุ']
+  ];
+  records.forEach(r => {
+    const page = getPageById(r.pageId);
+    const gross = (r.sales||0) - (r.cost||0);
+    const net = getNetProfit(r);
+    allData.push([
+      r.date, page ? page.name : 'ไม่ทราบ',
+      r.sales||0, r.cost||0, r.shipping||0, r.ads||0, r.other||0,
+      gross, net, r.note||''
+    ]);
+  });
+  const ws1 = XLSX.utils.aoa_to_sheet(allData);
+  ws1['!cols'] = [12,20,12,14,10,12,10,18,12,20].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws1, 'รายการทั้งหมด');
+
+  // Sheet 2: Monthly summary
+  const monthMap = {};
+  records.forEach(r => {
+    const d = new Date(r.date);
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    if (!monthMap[key]) monthMap[key] = { sales:0, cost:0, shipping:0, ads:0, other:0, profit:0 };
+    monthMap[key].sales += r.sales||0;
+    monthMap[key].cost += r.cost||0;
+    monthMap[key].shipping += r.shipping||0;
+    monthMap[key].ads += r.ads||0;
+    monthMap[key].other += r.other||0;
+    monthMap[key].profit += getNetProfit(r);
+  });
+  const monthData = [['เดือน', 'ยอดขายรวม', 'ต้นทุนรวม', 'ค่าส่งรวม', 'ค่าโฆษณารวม', 'ค่าอื่นๆรวม', 'กำไรสุทธิรวม', 'ROI%']];
+  Object.entries(monthMap).sort().forEach(([m, v]) => {
+    const roi = v.sales > 0 ? ((v.profit/v.sales)*100).toFixed(1) : 0;
+    monthData.push([m, v.sales, v.cost, v.shipping, v.ads, v.other, v.profit, roi+'%']);
+  });
+  const ws2 = XLSX.utils.aoa_to_sheet(monthData);
+  ws2['!cols'] = [12,14,12,10,14,10,14,8].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws2, 'สรุปรายเดือน');
+
+  // Sheet 3: Per page summary
+  const pageData = [['เพจ', 'ยอดขายรวม', 'ต้นทุนรวม', 'ค่าส่งรวม', 'ค่าโฆษณารวม', 'ค่าอื่นๆรวม', 'กำไรสุทธิรวม', 'ROI%', 'จำนวนรายการ']];
+  pages.forEach(p => {
+    const pr = records.filter(r => r.pageId === p.id);
+    const s = pr.reduce((a,r)=>a+(r.sales||0),0);
+    const c = pr.reduce((a,r)=>a+(r.cost||0),0);
+    const sh = pr.reduce((a,r)=>a+(r.shipping||0),0);
+    const ad = pr.reduce((a,r)=>a+(r.ads||0),0);
+    const ot = pr.reduce((a,r)=>a+(r.other||0),0);
+    const np = pr.reduce((a,r)=>a+getNetProfit(r),0);
+    const roi = s > 0 ? ((np/s)*100).toFixed(1) : 0;
+    pageData.push([p.name, s, c, sh, ad, ot, np, roi+'%', pr.length]);
+  });
+  const ws3 = XLSX.utils.aoa_to_sheet(pageData);
+  ws3['!cols'] = [20,14,12,10,14,10,14,8,12].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws3, 'สรุปรายเพจ');
+
+  // Sheet 4: Pages list
+  const pageListData = [['ชื่อเพจ', 'สถานะ', 'สี', 'วันที่สร้าง']];
+  pages.forEach(p => pageListData.push([p.name, p.active?'เปิด':'ปิด', p.color||'', p.createdAt||'']));
+  const ws4 = XLSX.utils.aoa_to_sheet(pageListData);
+  ws4['!cols'] = [24,10,10,20].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws4, 'รายชื่อเพจ');
+
+  const now = new Date();
+  const fname = `PageProfit_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.xlsx`;
+  XLSX.writeFile(wb, fname);
+  showToast('Export Excel สำเร็จ! ' + records.length + ' รายการ');
+}
+
+// ==================== IMPORT EXCEL ====================
+async function importExcel(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+
+      // Read "รายการทั้งหมด" sheet
+      const wsName = wb.SheetNames.find(n => n.includes('รายการ')) || wb.SheetNames[0];
+      const ws = wb.Sheets[wsName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+      if (rows.length < 2) { showToast('ไม่พบข้อมูลในไฟล์', 'error'); return; }
+
+      const headers = rows[0];
+      const dataRows = rows.slice(1).filter(r => r[0] && r[1]);
+
+      // Map page names to IDs (create if not exists)
+      const pageNameMap = {};
+      getPages().forEach(p => { pageNameMap[p.name] = p.id; });
+
+      let imported = 0, skipped = 0, newPages = 0;
+      const colors = ['#4f8ef7','#f75f6d','#2de4a4','#f7c94f','#7b5ef8','#f7834f'];
+
+      for (const row of dataRows) {
+        const date = row[0]?.toString().trim();
+        const pageName = row[1]?.toString().trim();
+        if (!date || !pageName) { skipped++; continue; }
+
+        // Create page if not exists
+        if (!pageNameMap[pageName]) {
+          const colorIdx = Object.keys(pageNameMap).length % colors.length;
+          const newPage = await window.firebaseAPI.addPage({
+            name: pageName,
+            color: colors[colorIdx],
+            active: true,
+            createdAt: new Date().toISOString()
+          });
+          // Wait a bit for Firebase to sync
+          await new Promise(res => setTimeout(res, 300));
+          const pages = getPages();
+          const found = pages.find(p => p.name === pageName);
+          if (found) { pageNameMap[pageName] = found.id; newPages++; }
+          else { skipped++; continue; }
+        }
+
+        const record = {
+          pageId: pageNameMap[pageName],
+          date: date,
+          sales: parseFloat(row[2]) || 0,
+          cost: parseFloat(row[3]) || 0,
+          shipping: parseFloat(row[4]) || 0,
+          ads: parseFloat(row[5]) || 0,
+          other: parseFloat(row[6]) || 0,
+          note: row[9]?.toString() || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        await window.firebaseAPI.addRecord(record);
+        imported++;
+      }
+
+      showToast(`Import สำเร็จ! ${imported} รายการ${newPages?' (+'+newPages+' เพจใหม่)':''}${skipped?' ข้าม '+skipped:''}`, 'success');
+      renderDashboard();
+
+    } catch(err) {
+      console.error(err);
+      showToast('เกิดข้อผิดพลาด: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 </script>
 </body>
 </html>
