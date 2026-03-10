@@ -17,22 +17,22 @@
      4. คัดลอก firebaseConfig มาวางแทนด้านล่าง
      ========================================== -->
 <script type="module">
-  // Firebase SDK - safe dynamic import prevents "already declared" errors
-  const { initializeApp, getApps } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
-  const { getDatabase, ref, set, push, onValue, remove, update } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js");
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, push, onValue, remove, update }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
   // 👇 วาง firebaseConfig ของคุณตรงนี้
-const firebaseConfig = {
-  apiKey: "AIzaSyDgIk0X5CiwzBZmD4usqsZPlIQS-hY3DYs",
-  authDomain: "amonrat789-81674.firebaseapp.com",
-  databaseURL: "https://amonrat789-81674-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "amonrat789-81674",
-  storageBucket: "amonrat789-81674.firebasestorage.app",
-  messagingSenderId: "1062048138550",
-  appId: "1:1062048138550:web:4e0c294524870082ff9f97"
-};
+  const firebaseConfig = {
+    apiKey: "AIzaSyDgIk0X5CiwzBZmD4usqsZPlIQS-hY3DYs",
+    authDomain: "amonrat789-81674.firebaseapp.com",
+    databaseURL: "https://amonrat789-81674-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "amonrat789-81674",
+    storageBucket: "amonrat789-81674.firebasestorage.app",
+    messagingSenderId: "1062048138550",
+    appId: "1:1062048138550:web:4e0c294524870082ff9f97"
+  };
 
-  const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+  const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
 
   // ==================== REALTIME SYNC ====================
